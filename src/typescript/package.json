@@ -18,6 +18,7 @@
     "test": "npm run build && echo '✅ All tests passed for npm publish'",
     "test:memory": "npm run build && node dist/tests/memory.test.js",
     "test:formatter": "npm run build && node dist/tests/prompt-formatter.test.js",
+    "test:subject": "npm run build && node dist/tests/subject.test.js",
     "test:jest": "jest",
     "test:all": "npm run test:memory && npm run test:formatter && npm run test:messages",
     "test:messages": "jest tests/test_messages.test.ts",

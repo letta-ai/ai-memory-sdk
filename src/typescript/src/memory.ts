@@ -4,23 +4,27 @@ import { MessageCreate } from './schemas';
 
 export interface MemoryConfig {
   lettaApiKey?: string;
+  subjectId?: string; // Optional default subject for instance-scoped operations
 }
 
 export class Memory {
   private lettaClient: LettaClient;
+  private subjectId?: string;
 
   constructor(config: MemoryConfig = {}) {
     const apiKey = config.lettaApiKey || process.env.LETTA_API_KEY;
     this.lettaClient = new LettaClient({ token: apiKey });
+    this.subjectId = config.subjectId;
   }
 
   private async createSleeptimeAgent(name: string, tags: string[]): Promise<string> {
+    const withDefault = Array.from(new Set([...(tags || []), 'ai-memory-sdk']));
     const agentState = await this.lettaClient.agents.create({
       name,
       model: 'openai/gpt-4',
       agentType: 'sleeptime_agent',
       initialMessageSequence: [],
-      tags,
+      tags: withDefault,
     });
     return agentState.id;
   }
@@ -31,6 +35,21 @@ export class Memory {
       matchAllTags: true,
     });
     return agents.length > 0 ? agents[0] : null;
+  }
+
+  private async findAgentByTag(tag: string) {
+    const agents = await this.lettaClient.agents.list({ tags: [tag], matchAllTags: true });
+    return agents.length > 0 ? agents[0] : null;
+  }
+
+  private subjectTags(subjectId: string): string[] {
+    // Include namespaced, raw, and default SDK tag for compatibility and discoverability
+    return [`subj:${subjectId}`, subjectId, 'ai-memory-sdk'];
+  }
+
+  private async getAgentForSubject(subjectId: string) {
+    // Prefer namespaced tag, fallback to legacy raw tag
+    return (await this.findAgentByTag(`subj:${subjectId}`)) || (await this.findAgentByTag(subjectId));
   }
 
   private async createContextBlock(
@@ -66,6 +85,35 @@ export class Memory {
     await this.lettaClient.agents.delete(agentId);
   }
 
+  private async ensureSubject(subjectId: string): Promise<string> {
+    const existing = await this.getAgentForSubject(subjectId);
+    if (existing) return existing.id;
+    const agentState = await this.lettaClient.agents.create({
+      name: `subconscious_agent_subject_${subjectId}`,
+      model: 'openai/gpt-4',
+      agentType: 'sleeptime_agent',
+      initialMessageSequence: [],
+      tags: this.subjectTags(subjectId),
+    });
+    await this.lettaClient.agents.passages.create(agentState.id!, { text: `Initialized memory for subject ${subjectId}`, tags: ['ai-memory-sdk'] });
+    return agentState.id!;
+  }
+
+  private getEffectiveSubject(passed?: string): string {
+    const sid = passed ?? this.subjectId;
+    if (!sid) {
+      throw new Error('No subjectId provided and instance is not bound to a subject. Pass subjectId=... or set in constructor.');
+    }
+    return sid;
+  }
+
+  private async getBlockByLabel(agentId: string, label: string): Promise<any | null> {
+    const blocks = await this.lettaClient.agents.blocks.list(agentId);
+    return blocks.find((b: any) => (b as any).label === label) ?? null;
+  }
+
+  // Users must follow naming conventions for agents/blocks/tags; no sanitization is applied here.
+
   private async learnMessages(agentId: string, messages: Record<string, any>[], skipVectorStorage: boolean = true): Promise<string> {
     const messageCreates = messages.map(msg => ({
       content: msg.content,
@@ -87,7 +135,7 @@ export class Memory {
       const tasks = messages.map(message => 
         this.lettaClient.agents.passages.create(agentId, {
           text: message.content,
-          tags: [message.role],
+          tags: [message.role, 'ai-memory-sdk'],
         })
       );
       await Promise.all(tasks);
@@ -112,6 +160,80 @@ export class Memory {
     while (await this.getRunStatus(runId) !== 'completed') {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
+  }
+
+  // ===== General Subject API =====
+
+  async initializeSubject(subjectId: string, reset: boolean = false): Promise<string> {
+    const existing = await this.getAgentForSubject(subjectId);
+    if (existing) {
+      if (reset) {
+        await this.deleteAgent(existing.id);
+      } else {
+        throw new Error(`Agent ${existing.id} already exists for subject ${subjectId}. Cannot re-initialize unless reset=true.`);
+      }
+    }
+    return await this.ensureSubject(subjectId);
+  }
+
+  async listBlocks(subjectId?: string): Promise<any[]> {
+    const sid = this.getEffectiveSubject(subjectId);
+    const agent = await this.getAgentForSubject(sid);
+    if (!agent) return [];
+    return await this.lettaClient.agents.blocks.list(agent.id);
+  }
+
+  async initializeMemory(
+    label: string,
+    description: string,
+    value: string = '',
+    charLimit: number = 10000,
+    reset: boolean = false,
+    subjectId?: string,
+  ): Promise<string> {
+    const sid = this.getEffectiveSubject(subjectId);
+    const agentId = await this.ensureSubject(sid);
+
+    let existing = await this.getBlockByLabel(agentId, label);
+    if (existing && reset) {
+      await this.deleteBlock(label, sid);
+      existing = null;
+    }
+    if (existing) {
+      return (existing as any).id;
+    }
+    return await this.createContextBlock(agentId, label, description, charLimit, value);
+  }
+
+  async getMemory(label: string, promptFormatted: boolean = false, subjectId?: string): Promise<string | null> {
+    const sid = this.getEffectiveSubject(subjectId);
+    const agent = await this.getAgentForSubject(sid);
+    if (!agent) return null;
+    const block = await this.getBlockByLabel(agent.id, label);
+    if (!block) return null;
+    if (promptFormatted) return this.formatBlock(block);
+    return (block as any).value ?? null;
+  }
+
+  async deleteBlock(label: string, subjectId?: string): Promise<void> {
+    const sid = this.getEffectiveSubject(subjectId);
+    const agent = await this.getAgentForSubject(sid);
+    if (!agent) return;
+    const block = await this.getBlockByLabel(agent.id, label);
+    if (!block) return;
+    await this.lettaClient.agents.blocks.detach(agent.id, (block as any).id);
+    await this.lettaClient.blocks.delete((block as any).id);
+  }
+
+  async addMessagesToSubject(subjectId: string, messages: Record<string, any>[], skipVectorStorage: boolean = true): Promise<string> {
+    const agent = await this.getAgentForSubject(subjectId);
+    const agentId = agent ? agent.id : await this.ensureSubject(subjectId);
+    return await this.learnMessages(agentId, messages, skipVectorStorage);
+  }
+
+  async addMessagesHere(messages: Record<string, any>[], skipVectorStorage: boolean = true): Promise<string> {
+    const sid = this.getEffectiveSubject();
+    return await this.addMessagesToSubject(sid, messages, skipVectorStorage);
   }
 
   async initializeUserMemory(
@@ -171,22 +293,37 @@ export class Memory {
     // Attach a single archival memory (workaround)
     await this.lettaClient.agents.passages.create(agentId, {
       text: `Initialized memory for user ${userId}`,
+      tags: ['ai-memory-sdk'],
     });
 
     return agentId;
   }
 
-  async addMessages(userId: string, messages: Record<string, any>[], skipVectorStorage: boolean = true): Promise<string> {
-    let agentId: string;
-    const agent = await this.getMatchingAgent([userId]);
-    
-    if (agent) {
-      agentId = agent.id;
-    } else {
-      agentId = await this.initializeUserMemory(userId);
+  async addMessages(messages: Record<string, any>[], skipVectorStorage?: boolean): Promise<string>;
+  async addMessages(userId: string, messages: Record<string, any>[], skipVectorStorage?: boolean): Promise<string>;
+  async addMessages(arg1: any, arg2?: any, arg3?: any): Promise<string> {
+    // Overloads:
+    // - addMessages(messages, skipVectorStorage?) when instance is bound to subjectId
+    // - addMessages(userId, messages, skipVectorStorage?) for legacy user mode
+    if (typeof arg1 === 'string') {
+      const userId = arg1 as string;
+      const messages = arg2 as Record<string, any>[];
+      const skipVectorStorage = (typeof arg3 === 'boolean') ? arg3 : true;
+      let agentId: string;
+      const agent = await this.getMatchingAgent([userId]);
+      if (agent) {
+        agentId = agent.id;
+      } else {
+        agentId = await this.initializeUserMemory(userId);
+      }
+      return await this.learnMessages(agentId, messages, skipVectorStorage);
     }
 
-    return await this.learnMessages(agentId, messages, skipVectorStorage);
+    // Treat first arg as messages for the bound context
+    const messages = arg1 as Record<string, any>[];
+    const skipVectorStorage = (typeof arg2 === 'boolean') ? arg2 : true;
+    const sid = this.getEffectiveSubject();
+    return await this.addMessagesToSubject(sid, messages, skipVectorStorage);
   }
 
   async addFiles(files: Record<string, any>[]): Promise<never> {
@@ -234,12 +371,12 @@ export class Memory {
     }
   }
 
-  async search(userId: string, query: string): Promise<string[]> {
+  async search(userId: string, query: string, tags?: string[]): Promise<string[]> {
     const agent = await this.getMatchingAgent([userId]);
     if (agent) {
       const response = await this.lettaClient.agents.passages.search(agent.id, {
         query,
-        tags: ['user'],
+        tags: tags ?? ['ai-memory-sdk', 'user'],
       });
       return response.results.map(result => result.content);
     }

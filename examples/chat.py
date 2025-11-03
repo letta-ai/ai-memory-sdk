@@ -6,13 +6,13 @@ memory = Memory()
 
 def chat_with_memories(message: str, user_id: str = "default_user") -> str:
 
-    # get the user memory 
+    # get the user memory
     user_memory = memory.get_user_memory(user_id)
     if not user_memory:
         memory.initialize_user_memory(user_id, reset=True)
         user_memory = memory.get_user_memory(user_id)
     
-    # format the user memory 
+    # format the user memory
     user_memory_prompt= memory.get_user_memory(user_id, prompt_formatted=True)
 
     # generate the assistant response
