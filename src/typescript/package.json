@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/memory-sdk",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "TypeScript SDK for using Letta subagents for pluggable memory management",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
