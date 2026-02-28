@@ -1,10 +1,12 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from schemas import Message, File
 
 
 messages_prompt = "The following message interactions have occured"
 messages_tag = "messages"
 message_total_char_limit = 5000 # how many character are included in a message chunk accross all messages
+
+sleep_tag = "sleep_consolidation"
 
 file_tag = "file"
 file_part_tag = "file_part"
@@ -24,6 +26,61 @@ def format_messages(messages: List[Message]) -> List[str]:
     ])
 
     return [{"role": "user", "content": f"<{messages_tag}>{messages_prompt}:\n{message_history}</{messages_tag}>"}]
+
+def format_sleep_prompt(
+    blocks: List[Any],
+    archival_passages: Optional[List[str]] = None,
+) -> List[Dict[str, str]]:
+    """
+    Format a sleep/consolidation prompt containing the current memory state.
+
+    The prompt asks the agent to review its own memory blocks and consolidate them:
+    resolve contradictions, merge redundancies, prune stale info, and reorganize.
+    """
+    # Format current block state
+    block_lines = []
+    for block in blocks:
+        label = getattr(block, "label", None)
+        description = getattr(block, "description", "")
+        value = getattr(block, "value", "")
+        if label is None:
+            continue
+        block_lines.append(
+            f'<block label="{label}" description="{description}">\n{value}\n</block>'
+        )
+    blocks_section = "\n\n".join(block_lines)
+
+    # Optional archival section
+    archival_section = ""
+    if archival_passages:
+        passages_text = "\n".join(f"- {p}" for p in archival_passages)
+        archival_section = (
+            f"\n\nThe following are recent passages from archival (long-term) memory. "
+            f"Consider whether any of this information should be promoted into your "
+            f"active memory blocks, or whether it reveals patterns worth capturing:\n"
+            f"{passages_text}"
+        )
+
+    prompt = (
+        f"<{sleep_tag}>\n"
+        f"You are entering a sleep/consolidation phase. No new external information "
+        f"is being provided. Instead, review your current memory state and improve it.\n\n"
+        f"Your tasks:\n"
+        f"1. Identify and resolve any contradictions between memory blocks\n"
+        f"2. Merge redundant information that appears across multiple blocks\n"
+        f"3. Remove or condense stale or outdated information\n"
+        f"4. Strengthen connections between related facts across blocks\n"
+        f"5. Reorganize information within blocks for clarity and coherence\n"
+        f"6. Note any gaps in your knowledge that future conversations should address\n\n"
+        f"Current memory blocks:\n{blocks_section}"
+        f"{archival_section}\n\n"
+        f"Update your memory blocks to reflect a consolidated, coherent understanding. "
+        f"Do not fabricate new information — only reorganize and refine what you already know.\n"
+        f"</{sleep_tag}>"
+    )
+
+    return [{"role": "user", "content": prompt}]
+
 
 def format_files(files: List[File]) -> List[Dict[str, str]]:
     """

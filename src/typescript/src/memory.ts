@@ -1,5 +1,5 @@
 import { LettaClient } from '@letta-ai/letta-client';
-import { formatMessages } from './prompt-formatter';
+import { formatMessages, formatSleepPrompt } from './prompt-formatter';
 import { MessageCreate } from './schemas';
 
 export interface MemoryConfig {
@@ -234,6 +234,55 @@ export class Memory {
   async addMessagesHere(messages: Record<string, any>[], skipVectorStorage: boolean = true): Promise<string> {
     const sid = this.getEffectiveSubject();
     return await this.addMessagesToSubject(sid, messages, skipVectorStorage);
+  }
+
+  /**
+   * Trigger offline memory consolidation for a subject.
+   *
+   * Sends the agent a reflection prompt containing its current memory state,
+   * asking it to review, reorganize, and refine its memory blocks. Analogous
+   * to memory consolidation during human sleep.
+   *
+   * @param options.subjectId - Subject to consolidate (uses instance default if omitted)
+   * @param options.includeArchival - Include recent archival passages in the reflection
+   * @param options.archivalLimit - Max archival passages to include (default: 10)
+   * @returns Run ID for use with waitForRun()
+   */
+  async sleep(options: {
+    subjectId?: string;
+    includeArchival?: boolean;
+    archivalLimit?: number;
+  } = {}): Promise<string | null> {
+    const { includeArchival = false, archivalLimit = 10 } = options;
+    const sid = this.getEffectiveSubject(options.subjectId);
+    const agentId = await this.ensureSubject(sid);
+
+    const blocks = await this.listContextBlocks(agentId);
+    if (blocks.length === 0) {
+      return null;
+    }
+
+    let archivalPassages: string[] | null = null;
+    if (includeArchival) {
+      try {
+        const response = await this.lettaClient.agents.passages.search(agentId, {
+          query: '*',
+          tags: ['ai-memory-sdk'],
+        });
+        archivalPassages = (response.results || [])
+          .slice(0, archivalLimit)
+          .map((r: any) => r.content);
+      } catch (e) {
+        console.warn('[ai-memory-sdk] Archival search failed during sleep:', e);
+        archivalPassages = null;
+      }
+    }
+
+    const sleepMessages = formatSleepPrompt(blocks, archivalPassages);
+    const lettaRun = await this.lettaClient.agents.messages.createAsync(agentId, {
+      messages: sleepMessages as any,
+    });
+    return lettaRun.id!;
   }
 
   async initializeUserMemory(

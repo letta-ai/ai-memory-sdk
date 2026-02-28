@@ -58,6 +58,13 @@ class _AgentsPassages:
     def create(self, agent_id: str, text: str, tags=None):
         return types.SimpleNamespace(id=f"passage-{agent_id}")
 
+    def search(self, agent_id: str, query: str, tags=None):
+        return types.SimpleNamespace(results=[
+            types.SimpleNamespace(content="archival passage 1"),
+            types.SimpleNamespace(content="archival passage 2"),
+            types.SimpleNamespace(content="archival passage 3"),
+        ])
+
 
 class _Agents:
     def __init__(self):
@@ -240,3 +247,53 @@ def test_long_block_value():
     result = memory.get_memory("data")
     assert result == long_value
     assert len(result) == 5000
+
+
+def test_sleep_basic():
+    """Test that sleep() returns a run ID when blocks exist"""
+    memory = Memory(subject_id="user_sleep")
+    memory.initialize_memory("human", "User info", value="Name: Alice", reset=True)
+    memory.initialize_memory("summary", "Summary", value="First chat", reset=True)
+
+    run_id = memory.sleep()
+    assert run_id is not None
+    assert run_id.startswith("run-")
+    memory.wait_for_run(run_id)
+
+
+def test_sleep_no_blocks_returns_none():
+    """Test that sleep() returns None when subject has no blocks"""
+    memory = Memory(subject_id="user_sleep_empty")
+    # Ensure the subject exists but has no blocks
+    memory._ensure_subject("user_sleep_empty")
+
+    run_id = memory.sleep()
+    assert run_id is None
+
+
+def test_sleep_with_archival():
+    """Test that sleep() with include_archival=True returns a run ID"""
+    memory = Memory(subject_id="user_sleep_archival")
+    memory.initialize_memory("notes", "Notes", value="Some notes", reset=True)
+
+    run_id = memory.sleep(include_archival=True, archival_limit=2)
+    assert run_id is not None
+    assert run_id.startswith("run-")
+
+
+def test_sleep_explicit_subject():
+    """Test that sleep() works with an explicit subject_id"""
+    memory = Memory()
+    memory.initialize_subject("project_sleep", reset=True)
+    memory.initialize_memory("spec", "Spec", value="v1", subject_id="project_sleep")
+
+    run_id = memory.sleep(subject_id="project_sleep")
+    assert run_id is not None
+    assert run_id.startswith("run-")
+
+
+def test_sleep_no_subject_raises():
+    """Test that sleep() raises when no subject is available"""
+    memory = Memory()
+    with pytest.raises(ValueError, match="No subject_id provided"):
+        memory.sleep()

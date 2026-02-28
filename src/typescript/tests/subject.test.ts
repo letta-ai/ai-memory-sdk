@@ -57,6 +57,13 @@ function createFakeLetta() {
       },
       passages: {
         create: async (_agentId: string, _payload: any) => ({}),
+        search: async (_agentId: string, _payload: any) => ({
+          results: [
+            { content: 'archival passage 1' },
+            { content: 'archival passage 2' },
+            { content: 'archival passage 3' },
+          ],
+        }),
       },
     },
     blocks: {
@@ -127,13 +134,107 @@ async function testExplicitContext() {
   console.log('✓ Explicit subject passed');
 }
 
+async function testSleepBasic() {
+  console.log('Testing sleep() with blocks...');
+
+  const memory = new Memory({ subjectId: 'user_sleep' });
+  (memory as any).lettaClient = createFakeLetta();
+
+  await memory.initializeMemory('human', 'User info', 'Name: Alice', 10000, true);
+  await memory.initializeMemory('summary', 'Summary', 'First chat', 10000, true);
+
+  const runId = await memory.sleep();
+  if (!runId || !runId.startsWith('run-')) {
+    throw new Error(`Expected run ID, got ${runId}`);
+  }
+  await memory.waitForRun(runId);
+
+  console.log('✓ sleep() with blocks passed');
+}
+
+async function testSleepNoBlocks() {
+  console.log('Testing sleep() with no blocks...');
+
+  const memory = new Memory({ subjectId: 'user_sleep_empty' });
+  (memory as any).lettaClient = createFakeLetta();
+
+  // Ensure subject exists but has no blocks
+  await memory.initializeSubject('user_sleep_empty', true);
+
+  const runId = await memory.sleep();
+  if (runId !== null) {
+    throw new Error(`Expected null for empty blocks, got ${runId}`);
+  }
+
+  console.log('✓ sleep() with no blocks returns null');
+}
+
+async function testSleepWithArchival() {
+  console.log('Testing sleep() with archival...');
+
+  const memory = new Memory({ subjectId: 'user_sleep_arch' });
+  (memory as any).lettaClient = createFakeLetta();
+
+  await memory.initializeMemory('notes', 'Notes', 'Some notes', 10000, true);
+
+  const runId = await memory.sleep({ includeArchival: true, archivalLimit: 2 });
+  if (!runId || !runId.startsWith('run-')) {
+    throw new Error(`Expected run ID, got ${runId}`);
+  }
+
+  console.log('✓ sleep() with archival passed');
+}
+
+async function testSleepExplicitSubject() {
+  console.log('Testing sleep() with explicit subject...');
+
+  const memory = new Memory();
+  (memory as any).lettaClient = createFakeLetta();
+
+  await memory.initializeSubject('project_sleep', true);
+  await memory.initializeMemory('spec', 'Spec', 'v1', 10000, false, 'project_sleep');
+
+  const runId = await memory.sleep({ subjectId: 'project_sleep' });
+  if (!runId || !runId.startsWith('run-')) {
+    throw new Error(`Expected run ID, got ${runId}`);
+  }
+
+  console.log('✓ sleep() with explicit subject passed');
+}
+
+async function testSleepNoSubjectThrows() {
+  console.log('Testing sleep() without subject throws...');
+
+  const memory = new Memory();
+  (memory as any).lettaClient = createFakeLetta();
+
+  let threw = false;
+  try {
+    await memory.sleep();
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('No subjectId provided')) {
+      threw = true;
+    } else {
+      throw e;
+    }
+  }
+  if (!threw) throw new Error('Expected error for missing subjectId');
+
+  console.log('✓ sleep() without subject throws');
+}
+
 async function runAllTests() {
   try {
     await testInstanceScopedContext();
     await testExplicitContext();
-    console.log('✅ Context tests passed');
+    await testSleepBasic();
+    await testSleepNoBlocks();
+    await testSleepWithArchival();
+    await testSleepExplicitSubject();
+    await testSleepNoSubjectThrows();
+    console.log('✅ All context + sleep tests passed');
   } catch (err) {
-    console.error('❌ Context test failed:', err instanceof Error ? err.message : String(err));
+    console.error('❌ Test failed:', err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 }

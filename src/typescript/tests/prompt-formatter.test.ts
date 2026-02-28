@@ -1,4 +1,4 @@
-import { formatMessages, formatFiles } from '../src/prompt-formatter';
+import { formatMessages, formatFiles, formatSleepPrompt } from '../src/prompt-formatter';
 import { MessageCreate, File } from '../src/schemas';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -283,6 +283,110 @@ function testFormatFilesMultiple() {
   }
 }
 
+function testFormatSleepPromptBasic() {
+  console.log('Testing formatSleepPrompt with blocks...');
+
+  const blocks = [
+    { label: 'human', description: 'User info', value: 'Name: Alice' },
+    { label: 'summary', description: 'Conversation summary', value: 'Discussed cats' },
+  ];
+
+  const result = formatSleepPrompt(blocks);
+
+  if (result.length !== 1) {
+    throw new Error(`Expected 1 message, got ${result.length}`);
+  }
+  if (result[0].role !== 'user') {
+    throw new Error(`Expected role 'user', got '${result[0].role}'`);
+  }
+
+  const content = result[0].content;
+  const expected = [
+    '<sleep_consolidation>',
+    'sleep/consolidation phase',
+    '<block label="human" description="User info">',
+    'Name: Alice',
+    '<block label="summary" description="Conversation summary">',
+    'Discussed cats',
+    '</sleep_consolidation>',
+  ];
+  for (const part of expected) {
+    if (!content.includes(part)) {
+      throw new Error(`Expected content to contain '${part}'`);
+    }
+  }
+
+  console.log('✓ formatSleepPrompt basic works correctly');
+}
+
+function testFormatSleepPromptWithArchival() {
+  console.log('Testing formatSleepPrompt with archival passages...');
+
+  const blocks = [
+    { label: 'human', description: 'User info', value: 'Name: Bob' },
+  ];
+  const archival = ['User mentioned liking jazz', 'User works at Acme Corp'];
+
+  const result = formatSleepPrompt(blocks, archival);
+  const content = result[0].content;
+
+  if (!content.includes('archival (long-term) memory')) {
+    throw new Error('Expected archival section header');
+  }
+  if (!content.includes('- User mentioned liking jazz')) {
+    throw new Error('Expected first archival passage');
+  }
+  if (!content.includes('- User works at Acme Corp')) {
+    throw new Error('Expected second archival passage');
+  }
+
+  console.log('✓ formatSleepPrompt with archival works correctly');
+}
+
+function testFormatSleepPromptNoArchival() {
+  console.log('Testing formatSleepPrompt without archival...');
+
+  const blocks = [
+    { label: 'notes', description: 'Notes', value: 'Some notes' },
+  ];
+
+  const result = formatSleepPrompt(blocks, null);
+  const content = result[0].content;
+
+  if (content.includes('archival (long-term) memory')) {
+    throw new Error('Should not contain archival section when null');
+  }
+
+  const result2 = formatSleepPrompt(blocks, []);
+  if (result2[0].content.includes('archival (long-term) memory')) {
+    throw new Error('Should not contain archival section when empty array');
+  }
+
+  console.log('✓ formatSleepPrompt without archival works correctly');
+}
+
+function testFormatSleepPromptSkipsLabelless() {
+  console.log('Testing formatSleepPrompt skips blocks without labels...');
+
+  const blocks = [
+    { label: 'human', description: 'Info', value: 'Alice' },
+    { description: 'No label', value: 'Should be skipped' },
+    { label: '', description: 'Empty label', value: 'Also skipped' },
+  ];
+
+  const result = formatSleepPrompt(blocks);
+  const content = result[0].content;
+
+  if (!content.includes('Alice')) {
+    throw new Error('Expected labeled block content');
+  }
+  if (content.includes('Should be skipped')) {
+    throw new Error('Block without label should be skipped');
+  }
+
+  console.log('✓ formatSleepPrompt skips labelless blocks');
+}
+
 function runAllTests() {
   console.log('Running Prompt Formatter tests...\n');
 
@@ -306,6 +410,18 @@ function runAllTests() {
     console.log();
     
     testFormatFilesMultiple();
+    console.log();
+
+    testFormatSleepPromptBasic();
+    console.log();
+
+    testFormatSleepPromptWithArchival();
+    console.log();
+
+    testFormatSleepPromptNoArchival();
+    console.log();
+
+    testFormatSleepPromptSkipsLabelless();
     console.log();
 
     console.log('✅ All Prompt Formatter tests passed!');

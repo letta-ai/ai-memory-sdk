@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Optional
 import time
 import os
 from letta_client import Letta
-from prompt_formatter import format_messages
+from prompt_formatter import format_messages, format_sleep_prompt
 from schemas import MessageCreate
 
 class Memory: 
@@ -293,6 +293,72 @@ class Memory:
         """Add messages using the instance's bound subject_id."""
         sid = self._get_effective_subject(None)
         return self.add_messages_for_subject(sid, messages, skip_vector_storage=skip_vector_storage)
+
+    def sleep(
+        self,
+        subject_id: Optional[str] = None,
+        include_archival: bool = False,
+        archival_limit: int = 10,
+    ) -> Optional[str]:
+        """Trigger offline memory consolidation for a subject.
+
+        Sends the agent a reflection prompt containing its current memory state,
+        asking it to review, reorganize, and refine its memory blocks. This is
+        analogous to memory consolidation during human sleep — the agent resolves
+        contradictions, merges redundancies, prunes stale information, and
+        strengthens connections between related facts.
+
+        Args:
+            subject_id: The subject to consolidate. Uses the instance default if
+                not provided.
+            include_archival: If True, also fetch recent passages from archival
+                memory and include them in the reflection prompt so the agent can
+                consider promoting long-term memories back into active blocks.
+            archival_limit: Maximum number of archival passages to include when
+                include_archival is True (default: 10).
+
+        Returns:
+            A run ID that can be passed to wait_for_run() to block until
+            consolidation is complete, or None if there are no memory blocks
+            to consolidate.
+
+        Example::
+
+            memory = Memory(subject_id="user_sarah")
+            run = memory.sleep()
+            if run:
+                memory.wait_for_run(run)
+        """
+        sid = self._get_effective_subject(subject_id)
+        agent_id = self._ensure_subject(sid)
+
+        blocks = self._list_context_blocks(agent_id)
+        if not blocks:
+            return None
+
+        archival_passages = None
+        if include_archival:
+            try:
+                response = self.letta_client.agents.passages.search(
+                    agent_id=agent_id,
+                    query="*",
+                    tags=[self._default_tag],
+                )
+                archival_passages = [
+                    result.content
+                    for result in (response.results or [])[:archival_limit]
+                ]
+            except Exception as e:
+                print(f"[ai-memory-sdk] Warning: archival search failed during sleep: {e}")
+                archival_passages = None
+
+        sleep_messages = format_sleep_prompt(blocks, archival_passages)
+
+        letta_run = self.letta_client.agents.messages.create_async(
+            agent_id=agent_id,
+            messages=sleep_messages,
+        )
+        return letta_run.id
 
     def initialize_user_memory(self,
         user_id: str,

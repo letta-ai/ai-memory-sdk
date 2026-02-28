@@ -9,6 +9,8 @@ const FILE_TAG = "file";
 const FILE_PART_TAG = "file_part";
 const FILE_CHAR_LIMIT = 20000;
 
+const SLEEP_TAG = "sleep_consolidation";
+
 export function formatMessages(messages: MessageCreate[]): Array<{ role: string; content: string }> {
   const messageHistory = messages
     .map(msg => `${msg.role}: ${msg.content}`)
@@ -18,6 +20,50 @@ export function formatMessages(messages: MessageCreate[]): Array<{ role: string;
     role: "user",
     content: `<${MESSAGES_TAG}>${MESSAGES_PROMPT}:\n${messageHistory}</${MESSAGES_TAG}>`
   }];
+}
+
+export function formatSleepPrompt(
+  blocks: any[],
+  archivalPassages?: string[] | null,
+): Array<{ role: string; content: string }> {
+  const blockLines = blocks
+    .filter((b: any) => b.label)
+    .map((b: any) => {
+      const label = b.label;
+      const description = b.description || '';
+      const value = b.value || '';
+      return `<block label="${label}" description="${description}">\n${value}\n</block>`;
+    });
+  const blocksSection = blockLines.join('\n\n');
+
+  let archivalSection = '';
+  if (archivalPassages && archivalPassages.length > 0) {
+    const passagesText = archivalPassages.map(p => `- ${p}`).join('\n');
+    archivalSection =
+      `\n\nThe following are recent passages from archival (long-term) memory. ` +
+      `Consider whether any of this information should be promoted into your ` +
+      `active memory blocks, or whether it reveals patterns worth capturing:\n` +
+      passagesText;
+  }
+
+  const prompt =
+    `<${SLEEP_TAG}>\n` +
+    `You are entering a sleep/consolidation phase. No new external information ` +
+    `is being provided. Instead, review your current memory state and improve it.\n\n` +
+    `Your tasks:\n` +
+    `1. Identify and resolve any contradictions between memory blocks\n` +
+    `2. Merge redundant information that appears across multiple blocks\n` +
+    `3. Remove or condense stale or outdated information\n` +
+    `4. Strengthen connections between related facts across blocks\n` +
+    `5. Reorganize information within blocks for clarity and coherence\n` +
+    `6. Note any gaps in your knowledge that future conversations should address\n\n` +
+    `Current memory blocks:\n${blocksSection}` +
+    `${archivalSection}\n\n` +
+    `Update your memory blocks to reflect a consolidated, coherent understanding. ` +
+    `Do not fabricate new information — only reorganize and refine what you already know.\n` +
+    `</${SLEEP_TAG}>`;
+
+  return [{ role: 'user', content: prompt }];
 }
 
 export function formatFiles(files: File[]): Array<{ role: string; content: string }> {

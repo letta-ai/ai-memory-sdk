@@ -244,6 +244,7 @@ memory = Memory(subject_id="user_sarah")
 - `delete_block(label: str, subject_id: Optional[str] = None) -> None`
 - `add_messages_for_subject(subject_id: str, messages: list, skip_vector_storage: bool = True) -> str`
 - Unified: `add_messages(messages: list, skip_vector_storage: bool = True) -> str` (uses bound `subject_id`)
+- `sleep(subject_id: Optional[str] = None, include_archival: bool = False, archival_limit: int = 10) -> Optional[str]`
 
 Example:
 ```python
@@ -266,6 +267,39 @@ This searches Letta's archival memory (requires `skip_vector_storage=False` when
 messages = memory.search("user_id", query="system prompts", tags=["assistant"])  # assistant passages
 messages = memory.search("user_id", query="any", tags=[])  # no tag filter
 ```
+
+### Sleep (offline memory consolidation)
+
+Trigger a consolidation pass where the agent reviews, reorganizes, and refines its own memory blocks — resolving contradictions, merging redundancies, pruning stale information, and strengthening connections. No new external information is provided; the agent only works with what it already knows.
+
+**Python:**
+```python
+memory = Memory(subject_id="user_sarah")
+
+# Basic consolidation
+run = memory.sleep()
+if run:
+    memory.wait_for_run(run)
+
+# With archival memory review (promotes long-term memories back into active blocks)
+run = memory.sleep(include_archival=True, archival_limit=20)
+if run:
+    memory.wait_for_run(run)
+```
+
+**TypeScript:**
+```ts
+const memory = new Memory({ subjectId: 'user_sarah' });
+
+const run = await memory.sleep();
+if (run) await memory.waitForRun(run);
+
+// With archival review
+const run2 = await memory.sleep({ includeArchival: true, archivalLimit: 20 });
+if (run2) await memory.waitForRun(run2);
+```
+
+Returns `None`/`null` if the subject has no memory blocks to consolidate. Common patterns: run on a cron schedule, call after a burst of conversation, or use for periodic memory hygiene.
 
 ### Retrieving the memory agent
 
@@ -301,7 +335,7 @@ memory.delete_user("user_id")
 - [ ] Query messages by time
 - [x] TypeScript support
 - [ ] Learning from files
-- [ ] Add "sleep" (offline collective revisioning of all data)
+- [x] Add "sleep" (offline collective revisioning of all data)
 
 ### Implementation notes
 
